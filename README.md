@@ -18,7 +18,7 @@ Learn best practices, tips, and tricks to build production-ready AI applications
 
 ## Project Timeline
 
-- [**Day 1:** Production LLM Client with Retry Logic & Cost Tracking](./day-01-production-llm-client/) | [Blog Post](https://your-hashnode-blog.hashnode.dev/day-1)
+- [**Day 1:** Production LLM Client with Retry Logic & Cost Tracking](./day-01-production-llm-client/) | [Blog Post](https://blog.chapainaashish.com.np/llm-client-with-retry-logic-and-cost-tracking)
 
 ---
 
@@ -61,8 +61,8 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 
-# Run examples
-python src/example.py
+# Run code
+python src/client.py
 ````
 
 ---

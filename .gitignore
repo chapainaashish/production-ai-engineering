@@ -5,3 +5,5 @@ myenv/
 .idea/
 .vscode/
 .env
+*.log
+playground

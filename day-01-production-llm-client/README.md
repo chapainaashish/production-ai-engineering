@@ -2,21 +2,6 @@
 
 The first way to interact with any LLM is through the API in development. This is pretty basic which you will master easily but you can miss some critical aspect which I will cover in this post.
 
-**Topic Covered:**
-
-* LLM API client with error handling
-    
-* Token counter to track tokens
-    
-* Cost calculator to monitor spending
-    
-* Exponential backoff retry logic to handle API failures
-    
-* Logging system for debugging and monitoring
-    
-
----
-
 ## Part 1: Understand Tokens Before Getting Excited
 
 Before calling the LLM, tokens are important to understand. So, when you send "Hello, world!" to GPT, the model doesn't process it as two words. It breaks it down into smaller units called tokens. Tokens directly impact everything in LLM development.
@@ -34,7 +19,7 @@ OpenAI uses a tokenization algorithm called **Byte Pair Encoding (BPE)**, implem
 
 **1\. Pricing is Per-Token**
 
-Every API call costs money based on token count. If you miscalculate tokens by 50%, you're miscalculating your budget by 50%. At scale, this means thousands of dollars in unexpected costs.
+Every API call costs money based on token count. So, if you miscalculate tokens by 50%, you're miscalculating your budget by 50%. At scale, this means thousands of dollars in unexpected costs.
 
 **2\. Context Windows Are Token-Limited**
 
@@ -73,7 +58,7 @@ for text in examples:
 'AI' = 1 tokens
 ```
 
-Notice that "Hello, world!" is 4 tokens, not 2. The comma and space are separate tokens. This is why you can't estimate tokens by counting words.
+Look "Hello, world!" is 4 tokens, not 2. The comma and space are separate tokens. This is why you can't estimate tokens by counting words.
 
 ---
 
@@ -81,7 +66,7 @@ Notice that "Hello, world!" is 4 tokens, not 2. The comma and space are separate
 
 ### Hide Secrets in .env
 
-Before we call the OpenAI API, we need to set up our API key properly. Never hardcode API keys in your code. Sounds pretty basic but most of the people miss it. This is how keys get leaked to GitHub and you end up with unexpected bills.
+Before we call the OpenAI API, we need to set up our API key properly. Never hardcode API keys in your code. Sounds pretty basic but most of the people miss it.
 
 Create a `.env` file in your project root:
 
@@ -176,7 +161,7 @@ That `finish_reason` field matters in production. if you see `"length"`, the res
 
 ## Part 3: Calculating The Cost
 
-LLM API calls can get expensive fast. Before deploying your app into production, understand token-based pricing first.
+Before deploying your app into production, understand token-based pricing first because LLM API calls can get expensive as you scale.
 
 ### Current Pricing
 
@@ -194,55 +179,9 @@ As of November 2025, OpenAI charges:
 * GPT-5 is 25x more expensive than GPT-5 nano for both input and output
     
 
-Alright, Now you have seen the cost, the model choice depends on your usecase. For straightforward tasks like summarization and classification, you can use GPT nano version and for complex task, you can use GPT 5 version.
-
-### Building a Cost Calculator
-
-```python
-def calculate_cost(
-    input_tokens: int, output_tokens: int, model: str = "gpt-5-nano"
-) -> dict:
-    """Calculate the cost of an API call"""
-
-    pricing = {
-        "gpt-5-nano": {"input": 0.05, "output": 0.40},
-        "gpt-5": {"input": 1.25, "output": 10.00},
-    }
-
-    if model not in pricing:
-        model = "gpt-5-nano"
-
-    price = pricing[model]
-    input_cost = (input_tokens / 1_000_000) * price["input"]
-    output_cost = (output_tokens / 1_000_000) * price["output"]
-
-    return {
-        "input_cost": input_cost,
-        "output_cost": output_cost,
-        "total_cost": input_cost + output_cost,
-        "model": model,
-    }
-
-
-# Example usage
-cost = calculate_cost(100, 200, "gpt-5-nano")
-print(f"Cost: ${cost['total_cost']:.6f}")
-
-# Compare with GPT-5
-cost_gpt5 = calculate_cost(100, 200, "gpt-5")
-print(f"GPT-5 would cost: ${cost_gpt5['total_cost']:.6f}")
-```
-
-**Output:**
-
-```plaintext
-Cost: $0.000085
-GPT-5 would cost: $0.002125
-```
-
 ### Real-World Cost Projection
 
-Let's calculate what a real production system would cost. Imagine you're building a customer support chatbot:
+Let's calculate what a real production system would cost. Imagine you're building a customer support chatbot with this specific scenario:
 
 **Scenario:**
 
@@ -284,7 +223,7 @@ GPT-5 Monthly: $712.50
 Savings with GPT-5 Nano: $684.00/month
 ```
 
----
+Alright, Now you have seen the cost, the model choice depends on your use-case. For straightforward tasks like summarization and classification, you can use GPT nano version and for complex task, you can use GPT 5 version. Furthermore, you can use [Openrouter](https://openrouter.ai/rankings) to compare models according to your use-case.
 
 ## Part 4: Error Handling & Retries are Important
 
@@ -302,114 +241,67 @@ LLM APIs might fail. So, you shouldn't assume they are immune to errors. You sho
 
 5\. Invalid Request Errors (HTTP 400)
 
-### Implementing Exponential Backoff
+### Implementing Exponential Backoff and Timeout
 
-The standard approach to handling retries is **exponential backoff with jitter**
+The standard approach to handling retries is **exponential backoff with jitter.** OpenAI standard SDK offers in-built retries and timeout. So, you can leverage that.
 
 ```python
 import asyncio
 import os
-import random
-from typing import Optional
-
 from dotenv import load_dotenv
-from openai import (
-    APIError,
-    APITimeoutError,
-    AsyncOpenAI,
-    AuthenticationError,
-    RateLimitError,
-)
+from openai import AsyncOpenAI
+from openai import APIError, APIConnectionError, RateLimitError, Timeout
 
-# Load env vars
 load_dotenv()
 
+client = AsyncOpenAI(
+    api_key=os.getenv("OPENAI_API_KEY"),
+    max_retries=3,  # Automatic exponential backoff with jitter
+    timeout=30.0
+)
 
-async def call_llm_with_retry(
-    client: AsyncOpenAI,
-    messages: list[dict],
-    model: str = "gpt-4o-mini",
-    max_retries: int = 3,
-    temperature: float = 0.7,
-) -> Optional[dict]:
-    """
-    Call LLM API with exponential backoff retry logic
+async def simple_llm_call():
+    """OpenAI API Call with Safe Error Handling"""
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": "Where is Nepal located?"}],
+            temperature=0.7,
+        )
 
-    This handles transient failures and prevents
-    overwhelming the API with rapid retries
-    """
+        print("Response:", response.choices[0].message.content)
+        print("\nToken Usage:")
+        print(f"  Prompt: {response.usage.prompt_tokens}")
+        print(f"  Completion: {response.usage.completion_tokens}")
+        print(f"  Total: {response.usage.total_tokens}")
+        print(f"  Finish Reason: {response.choices[0].finish_reason}")
 
-    for attempt in range(max_retries):
-        try:
-            response = await client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature, timeout=30.0
-            )
+    except RateLimitError as e:
+        print("Rate limit exceeded after retries:", e)
 
-            return {
-                "success": True,
-                "content": response.choices[0].message.content,
-                "tokens": response.usage.total_tokens,
-            }
+    except Timeout as e:
+        print("Request timed out after retries:", e)
 
-        except RateLimitError as e:
-            if attempt == max_retries - 1:
-                return {"success": False, "error": "Rate limit exceeded"}
+    except APIConnectionError as e:
+        print("Connection error after retries:", e)
 
-            # Exponential backoff with jitter
-            wait_time = (2**attempt) + random.uniform(0, 1)
-            print(f"Rate limited. Retrying in {wait_time:.2f}s...")
-            await asyncio.sleep(wait_time)
+    except APIError as e:
+        print("API returned an error even after retries:", e)
 
-        except APITimeoutError as e:
-            if attempt == max_retries - 1:
-                return {"success": False, "error": "Request timeout"}
-
-            print(f"Timeout. Retrying... (Attempt {attempt + 1}/{max_retries})")
-
-        except APIError as e:
-            # Server error - don't retry immediately
-            return {"success": False, "error": f"API error: {str(e)}"}
-
-        except AuthenticationError as e:
-            # Auth error - don't retry
-            return {"success": False, "error": "Invalid API key"}
-
-        except Exception as e:
-            return {"success": False, "error": f"Unexpected error: {str(e)}"}
-
-    return {"success": False, "error": "Max retries exceeded"}
+    except Exception as e:
+        print("Unexpected Error:", type(e).__name__, str(e))
 
 
-# Test it
-async def test_retry():
-    client = AsyncOpenAI(
-        base_url="https://openrouter.ai/api/v1", api_key=os.getenv("OPENROUTER_KEY")
-    )
-
-    result = await call_llm_with_retry(
-        client=client,
-        messages=[{"role": "user", "content": "Is Pokhara beautiful?"}],
-    )
-
-    if result["success"]:
-        print(f"Response: {result['content']}")
-        print(f"Tokens: {result['tokens']}")
-    else:
-        print(f"Error: {result['error']}")
-
-
-asyncio.run(test_retry())
+asyncio.run(simple_llm_call())
 ```
 
-### Why Add Jitter?
-
-You might wonder about this line:
+You might wonder about how `max_retires` works under the hood. It use something call **exponential backoff with jitter** which retry the API every few random seconds. This few random seconds are calculated by multiplying the attempt with two and adding jitter;
 
 ```python
 wait_time = (2 ** attempt) + random.uniform(0, 1)
 ```
 
-Why not just use `2 ** attempt`?
+The first expression give the result like (1s, 2s, 4s) and second expression is jitter which is random value between 0 and 1. You might be wondering why not just use `2 ** attempt` and get rid of jitter?
 
 **Without jitter:**
 
@@ -432,322 +324,6 @@ Why not just use `2 ** attempt`?
 For more details on this pattern, see [AWS's exponential backoff and jitter article](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/).
 
 ---
-
-## Part 5: Production-Ready Client
-
-Alright, let’s combine everything and build a production-ready LLM client. It handles:
-
-* Automatic retries with exponential backoff
-    
-* Cost and token tracking across all calls
-    
-* Comprehensive logging for debugging
-    
-* Graceful error handling
-    
-* Session statistics
-    
-
-### Complete Implementation
-
-```python
-import asyncio
-import logging
-import os
-import random
-import time
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Optional, TypedDict
-
-from dotenv import load_dotenv
-from openai import (
-    APIError,
-    APITimeoutError,
-    AsyncOpenAI,
-    AuthenticationError,
-    RateLimitError,
-)
-
-load_dotenv()
-
-
-class APIResult(TypedDict):
-    success: bool
-    content: Optional[str]
-    tokens: Optional[int]
-    cost: Optional[float]
-    error: Optional[str]
-
-
-class StatsDict(TypedDict):
-    total_calls: int
-    total_tokens: int
-    total_cost: float
-    avg_tokens_per_call: float
-    avg_cost_per_call: float
-
-
-@dataclass
-class LLMResponse:
-    """Structured LLM response with metadata"""
-
-    content: str
-    model: str
-    tokens: int
-    cost: float
-    latency_ms: int
-    timestamp: str
-
-
-def calculate_cost(
-    input_tokens: int, output_tokens: int, model: str = "gpt-5-nano"
-) -> float:
-    """Calculate the cost of an API call"""
-    pricing = {
-        "gpt-5-nano": {"input": 0.05, "output": 0.40},
-        "gpt-5": {"input": 1.25, "output": 10.00},
-        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
-    }
-
-    if model not in pricing:
-        model = "gpt-5-nano"
-
-    price = pricing[model]
-    input_cost = (input_tokens / 1_000_000) * price["input"]
-    output_cost = (output_tokens / 1_000_000) * price["output"]
-
-    return input_cost + output_cost
-
-
-async def call_llm_with_retry(
-    client: AsyncOpenAI,
-    messages: list[dict[str, str]],
-    model: str = "gpt-4o-mini",
-    max_retries: int = 3,
-    temperature: float = 0.7,
-) -> APIResult:
-    """
-    Call LLM API with exponential backoff retry logic
-    """
-
-    for attempt in range(max_retries):
-        try:
-            response = await client.chat.completions.create(
-                model=model, messages=messages, temperature=temperature, timeout=30.0
-            )
-
-            return {
-                "success": True,
-                "content": response.choices[0].message.content,
-                "tokens": response.usage.total_tokens,
-                "cost": calculate_cost(
-                    response.usage.prompt_tokens,
-                    response.usage.completion_tokens,
-                    model,
-                ),
-                "error": None,
-            }
-
-        except RateLimitError:
-            if attempt == max_retries - 1:
-                return {
-                    "success": False,
-                    "content": None,
-                    "tokens": None,
-                    "cost": None,
-                    "error": "Rate limit exceeded",
-                }
-
-            wait_time = (2**attempt) + random.uniform(0, 1)
-            await asyncio.sleep(wait_time)
-
-        except APITimeoutError:
-            if attempt == max_retries - 1:
-                return {
-                    "success": False,
-                    "content": None,
-                    "tokens": None,
-                    "cost": None,
-                    "error": "Request timeout",
-                }
-
-        except AuthenticationError:
-            return {
-                "success": False,
-                "content": None,
-                "tokens": None,
-                "cost": None,
-                "error": "Invalid API key",
-            }
-
-        except APIError as e:
-            return {
-                "success": False,
-                "content": None,
-                "tokens": None,
-                "cost": None,
-                "error": f"API error: {str(e)}",
-            }
-
-        except Exception as e:
-            return {
-                "success": False,
-                "content": None,
-                "tokens": None,
-                "cost": None,
-                "error": f"Unexpected error: {str(e)}",
-            }
-
-    return {
-        "success": False,
-        "content": None,
-        "tokens": None,
-        "cost": None,
-        "error": "Max retries exceeded",
-    }
-
-
-class ProductionLLMClient:
-    """
-    Production-ready LLM API client with logging, retries and cost tracking
-    """
-
-    def __init__(
-        self,
-        api_key: str,
-        default_model: str = "gpt-4o-mini",
-        log_file: str = "llm_calls.log",
-        base_url: Optional[str] = None,
-    ):
-        client_kwargs = {"api_key": api_key}
-        client_kwargs["base_url"] = base_url if base_url else None
-
-        self.client = AsyncOpenAI(**client_kwargs)
-        self.default_model = default_model
-
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(levelname)s - %(message)s",
-            handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
-        )
-        self.logger = logging.getLogger(__name__)
-
-        self.total_cost = 0.0
-        self.total_tokens = 0
-        self.call_count = 0
-
-        self.logger.info(f"LLM Client initialized with model: {default_model}")
-
-    async def call(
-        self,
-        prompt: str,
-        model: Optional[str] = None,
-        temperature: float = 0.7,
-        max_retries: int = 3,
-    ) -> Optional[LLMResponse]:
-        """
-        Make an LLM API call with full production features
-        """
-
-        model = model or self.default_model
-        messages = [{"role": "user", "content": prompt}]
-
-        start_time = time.time()
-
-        result = await call_llm_with_retry(
-            client=self.client,
-            messages=messages,
-            model=model,
-            max_retries=max_retries,
-            temperature=temperature,
-        )
-
-        latency = int((time.time() - start_time) * 1000)
-
-        if not result["success"]:
-            self.logger.error(f"LLM call failed: {result['error']}")
-            return None
-
-        self.call_count += 1
-        self.total_tokens += result["tokens"]
-        self.total_cost += result["cost"]
-
-        response = LLMResponse(
-            content=result["content"],
-            model=model,
-            tokens=result["tokens"],
-            cost=result["cost"],
-            latency_ms=latency,
-            timestamp=datetime.now().isoformat(),
-        )
-
-        self.logger.info(
-            f"LLM Call #{self.call_count} | "
-            f"Model: {model} | "
-            f"Tokens: {result['tokens']} | "
-            f"Cost: ${result['cost']:.6f} | "
-            f"Latency: {latency}ms"
-        )
-
-        return response
-
-    def get_stats(self) -> StatsDict:
-        """Get usage statistics for this session"""
-        return {
-            "total_calls": self.call_count,
-            "total_tokens": self.total_tokens,
-            "total_cost": round(self.total_cost, 6),
-            "avg_tokens_per_call": round(
-                self.total_tokens / max(self.call_count, 1), 2
-            ),
-            "avg_cost_per_call": round(self.total_cost / max(self.call_count, 1), 6),
-        }
-
-    def reset_stats(self) -> None:
-        """Reset usage statistics"""
-        self.logger.info("Resetting session statistics")
-        self.total_cost = 0.0
-        self.total_tokens = 0
-        self.call_count = 0
-
-
-async def main() -> None:
-    client = ProductionLLMClient(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_KEY") or "",
-        default_model="gpt-4o-mini",
-    )
-
-    response1 = await client.call("What is the capital city of Nepal?")
-    print(response1)
-
-    stats = client.get_stats()
-    print(f"\nSession Stats:")
-    print(f"  Total Calls: {stats['total_calls']}")
-    print(f"  Total Tokens: {stats['total_tokens']}")
-    print(f"  Total Cost: ${stats['total_cost']}")
-    print(f"  Avg Cost/Call: ${stats['avg_cost_per_call']}")
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-**Output:**
-
-```plaintext
-2025-11-07 10:48:13,828 - INFO - LLM Client initialized with model: gpt-4o-mini
-2025-11-07 10:48:17,194 - INFO - HTTP Request: POST https://openrouter.ai/api/v1/chat/completions "HTTP/1.1 200 OK"
-2025-11-07 10:48:17,242 - INFO - LLM Call #1 | Model: gpt-4o-mini | Tokens: 23 | Cost: $0.000007 | Latency: 3412ms
-LLMResponse(content='The capital city of Nepal is Kathmandu.', model='gpt-4o-mini', tokens=23, cost=7.05e-06, latency_ms=3412, timestamp='2025-11-07T10:48:17.242526')
-
-Session Stats:
-  Total Calls: 1
-  Total Tokens: 23
-  Total Cost: $7e-06
-  Avg Cost/Call: $7e-06
-```
 
 ## Resources
 

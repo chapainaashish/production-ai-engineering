@@ -254,6 +254,26 @@ There's no universal right answer. Here's how to think about it:
 Start at 1000 characters / 200 token overlap. Measure retrieval accuracy. Adjust from there — don't guess.
 
 
+## Semantic Chunking
+How It Works ?
+Instead of splitting by character count or structure, it splits by meaning shift.
+    Sentence 1: "Refund policy is 30 days."
+    Sentence 2: "Returns must include original packaging."
+    Sentence 3: "Our office opens at 9am."
+It embeds each sentence, then measures cosine similarity between consecutive sentences:
+
+Sentence 1 ↔ Sentence 2 → similarity: 0.89  (same topic, stay together)
+Sentence 2 ↔ Sentence 3 → similarity: 0.21  (topic shift, cut here)
+Wherever similarity drops below a threshold,  that's the chunk boundary.
+
+```python
+from langchain_experimental.text_splitter import SemanticChunker
+from langchain_openai import OpenAIEmbeddings
+
+splitter = SemanticChunker(OpenAIEmbeddings())
+chunks = splitter.split_documents(docs)
+```
+
 ## Full Pipeline: Load → Clean → Chunk
 
 ```python

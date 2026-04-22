@@ -1,89 +1,92 @@
 # Embeddings in RAG
 
-You've chunked your documents. Now what? You can't store text in a vector database. You can't compute "similarity" between two sentences. You need something call "embeddings".
+Retrieval-Augmented Generation (RAG) systems rely on the core idea of converting text into vectors so we can search by meaning instead of keywords. These vectors are called embeddings, and they are the backbone of semantic search. But turning raw text into embeddings is only the beginning. A production RAG system depends on how you chunk data, choose models, store vectors, and perform retrieval efficiently.
 
-## One Chunk, One Vector
 
-This is the foundation everything else builds on. When, you have chunks. Each chunk goes into the embedding model and comes out as a single vector(a list of floating point numbers). 
+## One Chunk → One Vector
+
+Before anything reaches a vector database, text must be split into chunks. Then, each chunk goes into the embedding model and comes out as a single vector(a list of floating point numbers)
 
 ```
-Chunk 1: "Refund policy is 30 days."     →  [0.2, 0.8, -0.3, ...]  (1536 numbers)
-Chunk 2: "Office hours are 9am to 5pm."  →  [0.5, -0.1, 0.9, ...]  (1536 numbers)
+Chunk 1: "Refund policy is 30 days."
+→ [0.21, 0.82, -0.33, ...]   (1536 dims)
+
+Chunk 2: "Office hours are 9am to 5pm."
+→ [0.52, -0.11, 0.91, ...]   (1536 dims)
 ```
 
-Your vector DB stores all three. At query time, you embed the user's question and compare it against every stored vector. The closest one wins This is why chunk quality matters so much. Each chunk gets exactly **one** vector to represent everything inside it. If a chunk mixes two unrelated topics like, refund policy and office hours in the same chunk, that single vector has to average both meanings. It ends up representing neither well. 
+A vector represents the entire meaning of a chunk. If you mix unrelated concepts:
+
+> "Refund policy is 30 days. Office hours are 9am–5pm."
+
+The embedding must compress both meanings into a single representation. That means if a chunk mixes two unrelated topics, like refund policy and office hours in the same chunk, that single vector has to average both meanings. This reduces retrieval accuracy because the vector no longer strongly represents either concept. This is why proper chunking is crucial in a RAG system. To achieve that, you should follow:
+
+- One topic per chunk
+- Keep semantic boundaries clean (headers, sections, paragraphs)
+- Use overlap (important, covered later)
 
 
 ## Inside the Embedding Model
 
-A embedding transformer doesn't output one vector. It outputs one vector per token.
+Embedding models are transformer-based architectures that output one vector per token.
 
-"Refund policy" → 2 tokens → 2 vectors:
-
-```
-"Refund"  →  [0.2,  0.8, -0.3]
-"policy"  →  [0.5, -0.1,  0.9]
-```
-
-Now you have 2 vectors. The vector DB needs one. Collapsing multiple token vectors into a single vector is called **pooling**. Three ways to do it:
-
-**CLS pooling** - BERT adds a special `[CLS]` token at the start of every input. After the transformer processes everything, take that token's vector as the sentence representation. It is designed for classification tasks and not ideal for similarity.
-
-**Mean pooling** - It average all token vectors dimension by dimension. Most modern models use this as it has better traits for semantic similarity.
+Example: "Refund policy" → 2 tokens → 2 vectors:
 
 ```
 "Refund"  →  [0.2,  0.8, -0.3]
 "policy"  →  [0.5, -0.1,  0.9]
-average   →  [0.35, 0.35, 0.3]  ← sentence embedding
 ```
 
-**Max pooling** - It take the maximum value at each dimension and preserves the strongest signal from any token. It is less common for text similarity. 
+But now you have 2 vectors. The vector DB needs one. Collapsing multiple token vectors into a single vector is called **pooling**. Three ways to do it:
 
-Most of the time, you don't choose the pooling strategy but it's already implemented into the embedding model you are going to use. However, it's necessary to know why `all-MiniLM-L6-v2` and `text-embedding-3-small` behave differently on the same text even at similar dimension counts. So, each model might have different pooling, different training and different vectors.
+**Mean Pooling (Most Common in Modern Models)** - Average all token vectors dimension by dimension. Most modern models use this as it has better traits for semantic similarity.
+
+```
+v_sentence = (v1 + v2 + ... + vn) / n
+```
+
+**CLS Pooling** - BERT adds a special `[CLS]` token at the start of every input. After the transformer processes everything, take that token's vector as the sentence representation. It is designed for classification tasks and not ideal for similarity.
+
+**Max Pooling** - Take the maximum value at each dimension and preserve the strongest signal from any token. It is less common for text similarity.
+
+Most of the time, you don't choose the pooling strategy, it's already implemented into the embedding model you are going to use. However, it's necessary to know why `all-MiniLM-L6-v2` and `text-embedding-3-small` behave differently on the same text even at similar dimension counts. Each model might have different pooling, different training, and different vectors.
 
 
 ## Choosing the Embedding Model
 
-When selecting the embeeding model in your project, You can use either API-based or local model.
+When selecting the embedding model for your project, you can use either API-based or local models.
 
-**API-based (OpenAI or other models)**
+**API-based (OpenAI or other models):**
 
-| Model | Dimensions | Cost per 1M tokens | When to use |
+| Model | Dimensions | When to use |
 |---|---|---|---|
-| `text-embedding-3-small` | 1536 | $0.02 | Development, most production use cases |
-| `text-embedding-3-large` | 3072 | $0.13 | When retrieval accuracy is critical |
+| `text-embedding-3-small` | 1536 | Development, most production use cases |
+| `text-embedding-3-large` | 3072 | When retrieval accuracy is critical |
 
 **Local (free, no API):**
 
-| Model | Dimensions | Cost | When to use |
+| Model | Dimensions | When to use |
 |---|---|---|---|
-| `all-MiniLM-L6-v2` | 384 | Free | Prototyping, privacy-sensitive data |
+| `all-MiniLM-L6-v2` | 384 | Prototyping, privacy-sensitive data |
+
+Before choosing a model, go through the Massive Text Embedding Benchmark (MTEB). MTEB is a standardized leaderboard that tests embedding models across 8 tasks and 181 datasets. For RAG, look at the **Retrieval tab** and the **NDCG@10 score**.
+
+- **NDCG@10** measures the quality of the top 10 retrieved results. It scores from 0 to 1 and cares about position — a document at rank 1 scores higher than one at rank 8. Because in real usage, if the answer is buried at position 8, your RAG might as well have missed it.
+
+- When analyzing this data, don't fall into the trap of always selecting the top-ranked model. MTEB averages scores across all 181 datasets — climate science, biomedical, debate arguments, Wikipedia, everything. Your RAG is probably for one specific domain. Choose wisely according to your need.
+
+> **Note:** MTEB ranks **embedding models only**, not GPT-4, not Claude. Those are response generation models and never appear here.
 
 
-Before choosing the model, you should go through Massive Text Embedding Benchmark (MTEB). MTEB is a standardized leaderboard that tests embedding models across 8 tasks and 181 datasets. For RAG, you should look at the **Retrieval tab** and the **NDCG@10 score**.
+## Vector Similarity in Retrieval
 
-* NDCG@10 score measure the quality of the top 10 retrieved results of the model. It scores from 0 to 1 and cares about position, which means document at rank 1 scores higher than at rank 8. Because in real usage, if the answer is buried at position 8, your RAG might as well have missed it. 
+Once embeddings are stored, we need to compute similarity between the query vector and document vectors. There are three ways to measure closeness between two vectors:
 
-* When analyzing this data, don't fall into the trap by always selecting the ranked model.MTEB averages scores across all 181 datasets, climate science, biomedical, debate arguments, Wikipedia, everything. Your RAG is probably for one specific domain. So, choose wisely according to your need. 
+**Euclidean distance** - Straight-line distance. Problem: a long document produces a larger-magnitude embedding than a short chunk. Two semantically identical chunks could appear "far apart" just because one has more words.
 
+**Dot product** - Sensitive to the magnitude problem. Works best when vectors are normalized.
 
-* NOTE:  MTEB ranks **embedding models only**, not GPT-4, not Claude. Those are response generation models and never appear here.
-
-```
-Embedding model  →  converts text to vectors  (MTEB ranks these)
-LLM              →  generates the answer      (different benchmarks)
-```
-
-
-## Finding Similarity of Vecotrs
-
-There are three ways to measure closeness between two vectors:
-
-**Euclidean distance** - straight-line distance. Problem: a long document produces a larger-magnitude embedding than a short chunk. Two semantically identical chunks could appear "far apart" just because one has more words.
-
-**Dot product** - same magnitude problem. Biased toward longer text.
-
-**Cosine similarity** - measures the angle between vectors, ignoring magnitude. Two vectors pointing the same direction score 1.0 regardless of length. This is what you want for text.
+**Cosine similarity** - Measures the angle between vectors, ignoring magnitude. Two vectors pointing the same direction score 1.0 regardless of length. This is what you want for text.
 
 ```python
 import numpy as np
@@ -98,26 +101,30 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
 
 Intuition for scores: above 0.9 is near-identical meaning. 0.7–0.9 is strongly related. Below 0.5 is weak or unrelated.
 
+You do not compare the query vector against every stored vector, that would be O(N) and too slow. Instead, use approximate nearest neighbor (ANN) search, which:
 
-## What the t-SNE Visualization Shows You
+- builds an index
+- searches only a subset of candidates
+- trades tiny accuracy loss for massive speed gain
 
-Reduce 1536 dimensions down to 2 with t-SNE and plot your chunks. Similar topics cluster together spatially.
+Common libraries that facilitate ANN:
 
-Two uses in practice:
+- FAISS (Meta)
+- HNSW (Hierarchical Navigable Small World graphs)
+- ScaNN (Google)
 
-**Sanity check your chunking** - if chunks that should be semantically close aren't clustering together, your chunking or cleaning broke something.
-
-**Understand your data** - you can literally see which topics are "close" in your knowledge base and spot gaps in coverage.
-
+These embeddings are stored in vector databases that provide indexing, similarity searching, and metadata filtering, so you don't have to worry about all of that yourself.
 
 ## What Not to Do
 
 - **Don't embed entire documents.** Embed chunks. A 50-page PDF as one embedding loses all granularity.
-- **Don't mix embedding models.** Index with `text-embedding-3-small`, query with `text-embedding-3-small`. Different models produce incompatible vector spaces — mixing them silently breaks retrieval.
-- **Don't skip cost tracking.** 10,000 chunks × 500 tokens avg = 5M tokens = $0.10 on `3-small`. Cheap until you reindex daily.
+- **Don't mix embedding models.** Index with `text-embedding-3-small`, query with `text-embedding-3-small`. Different models produce incompatible vector spaces - mixing them silently breaks retrieval.
 - **Don't embed during the request lifecycle.** Embed at index time. At query time, embed only the query string (~10ms), not your knowledge base.
+- **Use overlap to preserve context while chunking:**
 
+```
+Chunk 1: sentences 1–5
+Chunk 2: sentences 4–8
+```
 
-## Key Takeaway
-
-The surprising thing isn't that embeddings work — it's how well they work. "I want a refund" and "I'd like my money back" score above 0.92 with `text-embedding-3-small`. Zero keyword overlap. Pure semantic capture. But that only works if your chunks are clean and focused. One topic per chunk. The embedding model can't fix bad chunking - it just faithfully converts whatever you give it into a vector.
+- **Normalize your vectors.** Many embedding models produce normalized vectors internally. If not normalized, cosine similarity behaves inconsistently and dot product becomes biased.
